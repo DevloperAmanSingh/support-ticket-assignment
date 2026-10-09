@@ -42,7 +42,7 @@ The service is successful when:
 |---|---|
 | Available | A shift is a day and a time range that repeats each week. Example: Monday, 09:00 to 17:00. An agent is on shift when the current time is in a shift of the agent. Each agent has a timezone, so the shift times are in the local time of the agent. A shift can continue past midnight. |
 | Too much work | Each agent has a ticket limit. The default is 5 open tickets. The service does not assign new tickets to an agent at the ticket limit. |
-| Fair | The service assigns the ticket to the eligible agent with the fewest open tickets. If two agents have the same number, the service selects the agent who waited the longest time for a ticket. |
+| Fair | The service assigns the ticket to the eligible agent with the fewest open tickets. If two agents have the same number, the service selects the agent who waited the longest time for a ticket. The service uses open tickets because open tickets show how much work each agent has now. |
 | Coverage gap | Each company has one timezone. Coverage hours are the hours when the company must have an agent on shift, in that timezone. The default is all hours of all days. A coverage gap is one of these hours with no agent on shift. |
 | Reason | The service records each decision. The record shows the selected agent, the rejected agents, and the reason for each. |
 
