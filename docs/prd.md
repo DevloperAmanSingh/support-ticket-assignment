@@ -15,7 +15,7 @@ An agent is **eligible** when the agent belongs to the company, is on shift, and
 The service is successful when:
 
 - The service assigns a ticket in less than one second when an agent is eligible.
-- No agent has more open tickets than the ticket limit of that agent.
+- The service never assigns a ticket to an agent at or above the ticket limit.
 - The service always assigns a ticket to the eligible agent with the fewest open tickets.
 - The lead can see the reason for each assignment and each time range with no agent on shift.
 
@@ -41,7 +41,7 @@ The service is successful when:
 | Topic | Rule |
 |---|---|
 | Available (on shift) | A shift is a day and a time range that repeats each week. Example: Monday, 09:00 to 17:00. An agent is on shift when the current time is in a shift of the agent. Each agent has a timezone, so the shift times are in the local time of the agent. A shift can continue past midnight. |
-| Too much work | Each agent has a ticket limit. The default is 5 open tickets. The service does not assign new tickets to an agent at the ticket limit. |
+| Too much work | Each agent has a ticket limit. The default is 5 open tickets. The service does not assign new tickets to an agent at the ticket limit. The ticket system tells the service when a ticket closes. A closed ticket no longer counts toward the limit, so the agent can receive a new ticket. |
 | Fair | The service assigns the ticket to the eligible agent with the fewest open tickets. If two agents have the same number, the service selects the agent who waited the longest time. This is the agent whose last assignment is the oldest, and an agent with no assignment goes first. If the agents are still equal, the agent with the lower agent ID goes first. The service uses open tickets because open tickets show how much work each agent has now. |
 | Coverage gap | Each company has one timezone. Coverage hours are the times when the company must have an agent on shift, in that timezone. The default is all hours of all days. A coverage gap is a time range in the coverage hours with no agent on shift. The view shows the exact start and end of each gap. Example: shifts from 09:00 to 09:30 and from 10:00 to 11:00 give a gap from 09:30 to 10:00. |
 | Unassigned ticket | If no agent is eligible, the service saves the ticket as unassigned, with the reason. The team lead owns the unassigned tickets. The UI shows the number of unassigned tickets on each page and lists them, oldest first. The lead can change the order to newest first. The lead selects "Assign again" for one ticket or for all tickets, and the service applies the same rules. The ticket system can also send the ticket again. |
@@ -54,5 +54,7 @@ Example reason: "The service assigned ticket T-104 to Priya. Priya is on shift a
 - The UI does not create companies or agents. The service starts with sample companies and agents.
 - If a ticket has an agent and the ticket system sends the same `ticket_id` again, the API returns the same agent. The service counts the ticket one time only.
 - If no agent is eligible, the API gives the reason: no agent on shift, or all agents at the ticket limit. The service does not try again by itself, and it sends no message to the lead.
+- The ticket system reports each ticket closure to the service through one call. The technical design defines that call.
 - A ticket stays with the assigned agent after the shift of the agent ends. A schedule change applies from the next ticket.
+- If the lead lowers a ticket limit below the open count of the agent, the open tickets stay with the agent. The agent receives no new ticket until the open count is below the new limit.
 - Some countries move the clock by one hour two times each year (daylight saving time). The service keeps each shift in the local time of the agent, so a 09:00 shift stays at 09:00. The lead changes nothing.
