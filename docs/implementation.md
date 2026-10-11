@@ -24,9 +24,9 @@ flowchart LR
 
 Constraints: `status` in `open`, `closed`, `unassigned`; `open` requires `agent_id` and `assigned_at`; `unassigned` requires neither; `closed` requires `closed_at`. `tickets (company_id, agent_id)` references `agents (company_id, id)`, so an agent cannot own a ticket of another company. `created_at` is set on insert and never updated. The service validates `timezone` as an IANA name. Instants are stored as UTC; shift and coverage minutes stay local.
 
-The service computes, not stores: open count = `COUNT(*)` of `tickets` with that `agent_id` and `status = 'open'`; last assignment = `MAX(assigned_at)` over all tickets of that agent, open or closed, so an agent who closes everything is not "never assigned". Indexes: `tickets (agent_id, status)` and `tickets (company_id, status, created_at, ticket_id)`.
+The service does not store an open count or a last assignment. It computes both from `tickets` on each decision, so they cannot go out of date. The open count is the number of the agent's tickets with status `open`. The last assignment is the newest `assigned_at` over all of the agent's tickets, open and closed, so an agent who closed every ticket is not treated as never assigned. Index `tickets (agent_id, status)` serves these reads. Index `tickets (company_id, status, created_at, ticket_id)` serves the unassigned list, oldest first.
 
-`decisions.reason` is a JSON snapshot: the rule that decided, the selected agent with open count, limit, and previous `last_assigned_at`, and each rejected agent with a code and the compared value. A retry adds a row. A replay adds nothing.
+`decisions.reason` stores the reason as JSON, in the shape that section 3 shows. It is a copy of the values at decision time, so it stays correct after the counts change. A retry adds a row. A replay adds nothing.
 
 ## 2. Assignment logic
 
