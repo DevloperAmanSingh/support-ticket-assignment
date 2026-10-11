@@ -16,7 +16,7 @@ flowchart LR
 | Table | Columns | Notes |
 |---|---|---|
 | `companies` | `id`, `name`, `timezone` | `id` comes from the ticket system. `timezone` is seeded. No call edits it. |
-| `agents` | `id` PK, `company_id`, `name`, `timezone`, `ticket_limit` | `id` unique across companies, second unique key (`company_id`, `id`). `ticket_limit >= 1`, default 5. |
+| `agents` | `id` PK, `company_id`, `name`, `timezone`, `ticket_limit` | `id` is unique across companies. The second unique key (`company_id`, `id`) adds no uniqueness. PostgreSQL needs it as the target of the composite foreign key from `tickets`, which stops an agent from owning a ticket of another company. `ticket_limit >= 1`, default 5. |
 | `shifts` | `id`, `agent_id` FK, `weekday` 0..6, `start_minute`, `end_minute` | `weekday` 0 is Sunday. Local minutes 0..1439 of the agent. `start != end`. `end < start` wraps midnight and belongs to the start weekday. |
 | `coverage_hours` | `id`, `company_id`, `weekday` 0..6, `start_minute`, `end_minute` | Local minutes of the company, `start < end`, end up to 1440. No rows means every hour of every day. |
 | `tickets` | `company_id`, `ticket_id`, `status`, `agent_id`, `created_at`, `assigned_at`, `closed_at`, `decision_id` | PK (`company_id`, `ticket_id`). |
