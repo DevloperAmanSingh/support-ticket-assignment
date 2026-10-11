@@ -63,7 +63,7 @@ Bodies are JSON. Shift and coverage times are local `"HH:MM"`; `"24:00"` is vali
 | UI | `PUT /api/companies/{id}/coverage-hours` | `{ hours: [{ weekday, start, end }] }`. Empty list restores every hour of every day. Full day is `"00:00"` to `"24:00"`. |
 | UI | `GET /api/companies/{id}/tickets?status=unassigned&order=oldest` | Tickets with agent and latest reason. |
 
-**Assign again.** The service reads the list of unassigned tickets one time, oldest first, then by `ticket_id`. It decides each ticket in its own transaction with the steps of section 2, so one failure does not undo the others. The response is 200 with one result per ticket:
+**Assign again.** The service reads the list of unassigned tickets one time, oldest first, then by `ticket_id`. It decides each ticket in its own transaction with the steps of section 2, so one failure does not undo the others. After it gets the lock, it checks again that the ticket is still `unassigned`. If not, it skips the ticket. The response is 200 with one result per ticket:
 
 - `ASSIGNED`: the ticket now has an agent.
 - `UNASSIGNED`: there is still no eligible agent.
