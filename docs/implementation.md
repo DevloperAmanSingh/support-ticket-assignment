@@ -32,7 +32,7 @@ The service does not store an open count or a last assignment. It computes both 
 
 `POST /api/companies/{company_id}/assignments` selects an agent in the eight steps below. The steps run in one transaction at READ COMMITTED, so the decision is safe when requests arrive together.
 
-1. **Lock assignments for the company.** Take `pg_advisory_xact_lock(hashtext(company_id))`, so requests for the same company run one at a time. Other companies do not wait. A request waits up to 5 seconds (`SET LOCAL lock_timeout = '5s'`). If the lock is still not free, the request returns 503 with `Retry-After: 1` and changes nothing.
+1. **Lock assignments for the company.** Take `pg_advisory_xact_lock(hashtext(company_id))`, so requests for the same company run one at a time. Other companies do not wait. A request waits up to 750 ms (`SET LOCAL lock_timeout = '750ms'`). If the lock is still not free, the request returns 503 with `Retry-After: 1` and changes nothing.
 2. **Read the current time after getting the lock.** `now` comes from the application clock. The same value checks the shifts, timestamps the decision, and sets `assigned_at`.
 3. **Check for an existing ticket.** A caller can send the same `ticket_id` again after a lost response. If the ticket has an agent, return the saved agent and decision, with `"closed": true` if it is closed. If it is closed without an agent, return `assigned: false` with `TICKET_CLOSED`. These paths write nothing. A new ticket continues. An `unassigned` ticket also continues and gets a new decision.
 4. **Load the agents of the company.** Fetch each agent's shifts, ticket limit, open count, and last assignment time.
@@ -41,7 +41,7 @@ The service does not store an open count or a last assignment. It computes both 
 7. **Select the agent with the fewest open tickets.** On a tie, select the agent whose last assignment is the oldest. An agent with no assignment goes first. If still tied, use ascending text order of `agent_id`. The seed keeps ids one digit (`a1` to `a5`), so text order matches number order. For each other eligible agent, record the deciding comparison with the compared value: more open tickets (`MORE_OPEN`), a more recent assignment (`ASSIGNED_MORE_RECENTLY`), or a higher id (`HIGHER_ID`).
 8. **Save and return the assignment.** Insert the `decisions` row with its reason. Create or update the ticket as `open` with the selected `agent_id`, `assigned_at = now`, and the new `decision_id`. Commit both rows in the same transaction. Return the selected agent and the reason.
 
-**Lock rules.** The one-second target in the PRD applies to a request that does not wait. Close, retry, agent update, and coverage-hours update take the same lock, so a decision never reads a limit, shift, or count mid-change, and an edit applies from the next decision. A hash collision only makes an unrelated company wait. An error before commit rolls back and leaves the ticket row unchanged.
+**Lock rules.** The one-second target in the PRD includes the lock wait. A request waits at most 750 ms for the lock. That leaves 250 ms to decide and respond. PostgreSQL does not guarantee the 250 ms, so the timing tests check it. There is one exception to the target. If the lock is not free after 750 ms, the caller gets a 503 and sends the ticket again. The caller then has an answer inside one second, but not an assignment. Close, retry, agent update, and coverage-hours update take the same lock, so a decision never reads a limit, shift, or count mid-change, and an edit applies from the next decision. A hash collision only makes an unrelated company wait. An error before commit rolls back and leaves the ticket row unchanged.
 
 **Why raw counts.** The service compares open counts, not open divided by limit. Open count is what the lead sees, and the limit is a ceiling. An agent who starts a shift at zero gets the next tickets until level with the others.
 
@@ -68,7 +68,7 @@ Bodies are JSON. Shift and coverage times are local `"HH:MM"`; `"24:00"` is vali
 - `ASSIGNED`: the ticket now has an agent.
 - `UNASSIGNED`: there is still no eligible agent.
 - `SKIPPED`: the ticket is already assigned or closed.
-- `FAILED`: an error, with its code. A lock wait over 5 seconds gives `LOCK_TIMEOUT`. An unknown `ticket_id` gives `TICKET_NOT_FOUND`.
+- `FAILED`: an error, with its code. A lock wait over 750 ms gives `LOCK_TIMEOUT`. An unknown `ticket_id` gives `TICKET_NOT_FOUND`.
 
 Assign response:
 
@@ -92,7 +92,7 @@ Assign response:
 
 With no eligible agent, `agent` and `selected` are `null` and `rejected` lists every agent. With `TICKET_CLOSED`, there is no `rejected` list.
 
-400 `VALIDATION_ERROR`: `ticket_limit < 1`, unknown IANA timezone, `start == end`, overlapping shifts of one agent (wrap-around included), overlapping coverage ranges on one weekday, a time not on a 5-minute step. Unknown company, agent, or ticket in a path: 404 `COMPANY_NOT_FOUND`, `AGENT_NOT_FOUND`, or `TICKET_NOT_FOUND`. Lock wait over 5 seconds: 503 `LOCK_TIMEOUT`. A successful request returns 200, also when `assigned` is false. An error body is `{ "error": { "code", "message" } }`.
+400 `VALIDATION_ERROR`: `ticket_limit < 1`, unknown IANA timezone, `start == end`, overlapping shifts of one agent (wrap-around included), overlapping coverage ranges on one weekday, a time not on a 5-minute step. Unknown company, agent, or ticket in a path: 404 `COMPANY_NOT_FOUND`, `AGENT_NOT_FOUND`, or `TICKET_NOT_FOUND`. Lock wait over 750 ms: 503 `LOCK_TIMEOUT`. A successful request returns 200, also when `assigned` is false. An error body is `{ "error": { "code", "message" } }`.
 
 ## 4. Coverage
 
@@ -132,7 +132,7 @@ Rare cases with a defined rule.
 |---|---|---|
 | Same instant | Two calls for the same new ticket arrive together. | They run one at a time. If the first assigns an agent, the second returns the same agent. |
 | | Twenty tickets arrive together. Three agents are on shift at zero, with a limit of 5. | Fifteen tickets are assigned, five per agent. Five are saved as `unassigned`. |
-| | A request arrives at 16:59:58 and gets the lock at 17:00:01. | The time is read after the lock, so an agent whose shift ended at 17:00 is not selected. |
+| | A request arrives at 16:59:59.750 and gets the lock at 17:00:00.250. | The time is read after the lock, so an agent whose shift ended at 17:00 is not selected. |
 | Daylight saving | The clocks go forward. A shift is 01:00 to 03:00. | The hour 02:00 to 03:00 does not occur, so the agent is on shift for one real hour. Coverage shows one interval. |
 | | The clocks go forward. A shift is 02:15 to 03:15. | The time 02:15 does not occur, so the shift starts at 03:00. |
 | | The clocks go back. A shift is 01:15 to 01:45. | The hour 01:00 to 02:00 occurs two times, so the agent is on shift two times. Coverage shows two intervals with different UTC offsets. |
@@ -149,6 +149,7 @@ API tests run against PostgreSQL with one fixture per test.
 
 - Each path of step 3, close, both no-agent reasons, two timezones, the schedule edits of section 6, every validation error, and tenant isolation (`T-1` in two companies).
 - Concurrency: the same-instant rows of section 7, with 20 `decisions` rows for 20 tickets and one decision for 10 calls on one ticket. Lock order with barriers, close then assign and the reverse, where the second transaction sees the first commit.
-- Retry-all with one forced timeout: the others succeed, the response names the failure, and `created_at` is unchanged. One timed test: an eligible assignment on the seed returns in under one second.
+- Retry-all with one forced timeout: the others succeed, the response names the failure, and `created_at` is unchanged.
+- Timing: each case finishes inside one second. A request that does not wait gets an agent. A request that waits behind a held lock gets an agent. A lock held longer than 750 ms gives a 503. Twenty requests at once for one company all finish, with correct assignments and limits.
 
 UI tests run against a mock of the API: the API client, the reason sentences, and one flow per tab. `npm run seed` loads two companies, five agents each across three timezones, a Saturday gap, and three open tickets. `npm test` runs the suites in `server/` and in `web/`.
