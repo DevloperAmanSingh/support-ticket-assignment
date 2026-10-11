@@ -30,7 +30,9 @@ The service computes, not stores: open count = `COUNT(*)` of `tickets` with that
 
 ## 2. Assignment logic
 
-`POST /api/companies/{company_id}/assignments` runs one transaction at READ COMMITTED.
+The service selects an agent who is on shift and below the ticket limit. Among those agents, it prefers the fewest open tickets, then the oldest last assignment, then the lower agent ID. When open counts are equal, an agent with no assignment goes first.
+
+The steps below make that decision safe when requests arrive together. `POST /api/companies/{company_id}/assignments` runs them in one transaction at READ COMMITTED.
 
 1. Lock the company: `pg_advisory_xact_lock(hashtext(company_id))`, with `SET LOCAL lock_timeout = '5s'`. A second request for the same company waits here. Other companies do not wait.
 2. Read `now` from the application clock, after the lock. It serves the on-shift check, the snapshot, and `assigned_at`.
@@ -59,13 +61,20 @@ Bodies are JSON. Shift and coverage times are local `"HH:MM"`; `"24:00"` is vali
 |---|---|---|
 | Ticket system | `POST /api/companies/{id}/assignments` | Body `{ "ticket_id" }`. Section 2. |
 | Ticket system | `POST /api/companies/{id}/tickets/{ticket_id}/close` | `open` or `unassigned` becomes `closed`, `closed_at = now`, agent kept. Already `closed`: no-op, 200. Unknown: 404. |
-| UI | `POST /api/companies/{id}/assignments/retry` | Body `{ "ticket_id" }` or `{ "all": true }`. Snapshots the unassigned ids once, ordered (`created_at`, `ticket_id`), runs section 2 per ticket in its own transaction, rechecks status under the lock, returns 200 with one entry per ticket: `ASSIGNED`, `UNASSIGNED`, `SKIPPED` (ticket not `unassigned`), or `FAILED` with the error code. One failure does not undo the others. An unknown `ticket_id` in the body is `FAILED` with `TICKET_NOT_FOUND`. |
+| UI | `POST /api/companies/{id}/assignments/retry` | Body `{ "ticket_id" }` or `{ "all": true }`. Tries one unassigned ticket again, or all of them, oldest first. Details are below the table. |
 | UI | `GET /api/companies` | Companies. |
 | UI | `GET /api/companies/{id}/agents` | Agents with shifts, limit, open count, on-shift flag. |
 | UI | `PUT /api/companies/{id}/agents/{agent_id}` | `{ timezone, ticket_limit, shifts: [{ weekday, start, end }] }`. Replaces all three under the lock. |
 | UI | `GET /api/companies/{id}/coverage?week=2026-10-12` | Gaps and per-agent intervals for that company-local week. `week` is a Monday. |
 | UI | `PUT /api/companies/{id}/coverage-hours` | `{ hours: [{ weekday, start, end }] }`. Empty list restores every hour of every day. Full day is `"00:00"` to `"24:00"`. |
 | UI | `GET /api/companies/{id}/tickets?status=unassigned&order=oldest` | Tickets with agent and latest reason. |
+
+**Assign again.** The service reads the list of unassigned tickets one time, oldest first, then by `ticket_id`. It decides each ticket in its own transaction with the steps of section 2, so one failure does not undo the others. The response is 200 with one result per ticket:
+
+- `ASSIGNED`: the ticket now has an agent.
+- `UNASSIGNED`: there is still no eligible agent.
+- `SKIPPED`: the ticket is already assigned or closed.
+- `FAILED`: an error, with its code. An unknown `ticket_id` gives `TICKET_NOT_FOUND`.
 
 Assign response:
 
@@ -89,7 +98,7 @@ Assign response:
 
 No agent: `"assigned": false`, `"agent": null`, `"selected": null`, rule `NO_AGENT_ON_SHIFT` or `ALL_AT_LIMIT`, full `rejected` list. Closed without agent: rule `TICKET_CLOSED`, no `rejected`.
 
-400 `VALIDATION_ERROR`: `ticket_limit < 1`, unknown IANA timezone, `start == end`, overlapping shifts of one agent (wrap-around included), overlapping coverage ranges on one weekday, a time not on a 5-minute step. Unknown company, agent, or ticket in a path: 404 `COMPANY_NOT_FOUND`, `AGENT_NOT_FOUND`, or `TICKET_NOT_FOUND`. Lock wait over 5 seconds: 503 `LOCK_TIMEOUT`. Every other response is 200, also when `assigned` is false. An error body is `{ "error": { "code", "message" } }`.
+400 `VALIDATION_ERROR`: `ticket_limit < 1`, unknown IANA timezone, `start == end`, overlapping shifts of one agent (wrap-around included), overlapping coverage ranges on one weekday, a time not on a 5-minute step. Unknown company, agent, or ticket in a path: 404 `COMPANY_NOT_FOUND`, `AGENT_NOT_FOUND`, or `TICKET_NOT_FOUND`. Lock wait over 5 seconds: 503 `LOCK_TIMEOUT`. A successful request returns 200, also when `assigned` is false. An error body is `{ "error": { "code", "message" } }`.
 
 The service assumes the ticket system calls `close`. If the trial supplies status another way, `close` becomes the import point and nothing else changes.
 
@@ -129,7 +138,7 @@ Normal cases that the service handles as part of its main flow.
 | | An `unassigned` ticket is closed. | It becomes `closed` with no agent. A later assign returns `TICKET_CLOSED`. |
 | Nobody eligible | No agent is on shift. | The ticket is saved as `unassigned` with `NO_AGENT_ON_SHIFT`. Every agent is in the rejected list. |
 | | Every agent on shift is at the limit. | The ticket is saved as `unassigned` with `ALL_AT_LIMIT`. |
-| | The company has no agents. | The ticket is saved as `unassigned` with an empty rejected list. The whole week is one gap. |
+| | The company has no agents. | The ticket is saved as `unassigned` with an empty rejected list. The coverage view shows all coverage hours as gaps. |
 | Fairness | A new agent starts at zero. The others have three each. | The new agent gets the next three tickets. Then the normal order applies. |
 | | Two agents tie on open count and on last assignment time. | The lower `agent_id` wins. The other agent gets `HIGHER_ID`. |
 | Schedule edits | The lead deletes a shift, or lowers a limit below the open count. | Open tickets stay with the agent. New tickets come only in the remaining shifts, and only when the count is below the limit. |
