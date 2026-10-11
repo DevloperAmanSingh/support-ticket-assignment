@@ -34,22 +34,20 @@ The service selects an agent who is on shift and below the ticket limit. Among t
 
 The steps below make that decision safe when requests arrive together. `POST /api/companies/{company_id}/assignments` runs them in one transaction at READ COMMITTED.
 
-1. Lock the company: `pg_advisory_xact_lock(hashtext(company_id))`, with `SET LOCAL lock_timeout = '5s'`. A second request for the same company waits here. Other companies do not wait.
-2. Read `now` from the application clock, after the lock. It serves the on-shift check, the snapshot, and `assigned_at`.
-3. Find the ticket row. `open`: return the saved agent and decision. `closed` with an agent: return the same plus `"closed": true`. `closed` without an agent: return `assigned: false` with rule `TICKET_CLOSED`. These paths write nothing. `unassigned` or missing: continue.
-4. Load the company's agents with shifts, open counts, and last assignments.
-5. Reject agents not on shift at `now` (`NOT_ON_SHIFT`). Then reject agents at or above `ticket_limit` (`AT_LIMIT`).
-6. If nobody is left: insert a `decisions` row with `NO_AGENT_ON_SHIFT` or `ALL_AT_LIMIT`, upsert the ticket as `unassigned` with the new `decision_id` and the original `created_at`, commit, return `assigned: false`.
-7. Order the rest by open count, then `last_assigned_at` with never-assigned first, then `agent_id`. The first wins. Each other agent gets `MORE_OPEN`, `ASSIGNED_MORE_RECENTLY`, or `HIGHER_ID` with the compared value.
-8. Insert the `decisions` row, upsert the ticket as `open` with `agent_id`, `assigned_at = now`, and `decision_id`, commit.
+1. **Lock assignments for the company.** Take `pg_advisory_xact_lock(hashtext(company_id))`, so requests for the same company run one at a time. Other companies do not wait. A request waits up to 5 seconds (`SET LOCAL lock_timeout = '5s'`). If the lock is still not free, the request returns 503 with `Retry-After: 1` and changes nothing.
+2. **Read the current time after getting the lock.** `now` comes from the application clock. The same value checks the shifts, timestamps the decision, and sets `assigned_at`.
+3. **Check for an existing ticket.** If the ticket has an agent, return the saved agent and decision, with `"closed": true` if it is closed. If it is closed without an agent, return `assigned: false` with `TICKET_CLOSED`. These paths write nothing. An `unassigned` or new ticket continues.
+4. **Load the agents of the company.** Fetch each agent's shifts, ticket limit, open count, and last assignment time. The last assignment includes tickets that are now closed.
+5. **Filter out agents who cannot receive a ticket.** Exclude agents who are off shift at `now` (`NOT_ON_SHIFT`). Then exclude agents whose open count is at or above the ticket limit (`AT_LIMIT`). Record the reason for each.
+6. **If no agent is eligible, save the ticket as unassigned.** Record whether nobody is on shift (`NO_AGENT_ON_SHIFT`) or every on-shift agent is at the limit (`ALL_AT_LIMIT`). Insert the `decisions` row. Create or update the ticket as `unassigned` with the new `decision_id` and its original `created_at`. Commit and return `assigned: false`.
+7. **Select the agent with the fewest open tickets.** On a tie, select the agent whose last assignment is the oldest. An agent with no assignment goes first. If still tied, use ascending text order of `agent_id`. The seed keeps ids one digit (`a1` to `a5`), so text order matches number order. For each other eligible agent, record the deciding comparison with the compared value: more open tickets (`MORE_OPEN`), a more recent assignment (`ASSIGNED_MORE_RECENTLY`), or a higher id (`HIGHER_ID`).
+8. **Save and return the assignment.** Insert the `decisions` row with its reason. Create or update the ticket as `open` with the selected `agent_id`, `assigned_at = now`, and the new `decision_id`. Commit both rows in the same transaction. Return the selected agent and the reason.
 
-**Lock rules.** After 5 seconds of waiting the request rolls back and returns 503 with `Retry-After: 1`. The one-second target in the PRD applies to a request that does not wait. Close, retry, agent update, and coverage-hours update take the same lock, so a decision never reads a limit, shift, or count mid-change, and an edit applies from the next decision. A hash collision only makes an unrelated company wait. An error before commit rolls back and leaves the ticket row unchanged.
+**Lock rules.** The one-second target in the PRD applies to a request that does not wait. Close, retry, agent update, and coverage-hours update take the same lock, so a decision never reads a limit, shift, or count mid-change, and an edit applies from the next decision. A hash collision only makes an unrelated company wait. An error before commit rolls back and leaves the ticket row unchanged.
 
 **Replay.** A caller that loses the response resends the same `ticket_id`. An `open` result is replayed. An `unassigned` one is decided again.
 
 **Why raw counts.** The service compares open counts, not open divided by limit. Open count is what the lead sees, and the limit is a ceiling. An agent who starts a shift at zero gets the next tickets until level with the others.
-
-**Why plain id order.** `agent_id` is text and compares as a plain string. The seed keeps ids one digit (`a1` to `a5`).
 
 **On shift.** Convert `now` to the agent's timezone, giving weekday `d` and minute `m`. The agent is on shift when one of these holds: a shift on `d` has `start <= m < end`; a shift on `d` wraps and `start <= m`; a shift on `d - 1` wraps and `m < end`. Start is inclusive, end is exclusive. A repeated DST hour is on shift both times. A missing hour never occurs.
 
