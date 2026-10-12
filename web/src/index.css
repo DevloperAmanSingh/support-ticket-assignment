@@ -1,0 +1,96 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/instrument-sans";
+
+/* Tailwind skips paths that .gitignore names, and the root .gitignore names `coverage/`. */
+@source "./features/coverage";
+
+/* The UI has one theme, a dark one. `class="dark"` on <html> turns on the dark styles of shadcn. */
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* The colors with a meaning of their own: shift state, coverage, and one hue per agent bar. */
+@theme {
+  --color-on-shift: #35d08a;
+  --color-waiting: #f0b13c;
+  --color-waiting-soft: #3b2e12;
+  --color-gap: #ff6a57;
+  --color-off-hours: #32445a;
+  /* Coverage hours are the lit part of a day. */
+  --color-coverage: #22374b;
+  --color-agent-1: #5b9dff;
+  --color-agent-2: #2cc5b4;
+  --color-agent-3: #a58bff;
+  --color-agent-4: #b4d455;
+  --color-agent-5: #f07cc0;
+  --color-agent-6: #55c8f2;
+  --color-agent-7: #9fb3c8;
+  --color-agent-8: #7f8cff;
+  /* Text on an agent bar. */
+  --color-agent-ink: #0b1620;
+}
+
+:root {
+  color-scheme: dark;
+  --background: #101923;
+  --foreground: #e8eef4;
+  --card: #16212d;
+  --card-foreground: #e8eef4;
+  --popover: #1b2937;
+  --popover-foreground: #e8eef4;
+  --primary: #7dc3f2;
+  --primary-foreground: #0b1620;
+  --secondary: #223141;
+  --secondary-foreground: #e8eef4;
+  --muted: #1e2c3a;
+  --muted-foreground: #8fa1b3;
+  --accent: #26384a;
+  --accent-foreground: #e8eef4;
+  --destructive: #ff7a68;
+  --border: #283848;
+  --input: #3a4d61;
+  --ring: #7dc3f2;
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
