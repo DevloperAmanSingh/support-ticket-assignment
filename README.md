@@ -84,13 +84,6 @@ The defaults match `docker-compose.yml`, so no setup is needed. To change a valu
 | `PORT` | `3000` |
 | `LOG_LEVEL` | `info` |
 
-## What is simplified
-
-- There is no login. Companies and agents come from the seed, and the UI does not create them.
-- There is no real ticket system. The **New ticket** form and the **Close** button in the UI call the same API in its place.
-- Decisions for one company run one at a time, under one database lock.
-- A request that waits more than 750 ms gets a 503. The caller sends the ticket again.
-
 ## What I would build next
 
 1. A stored open count and last assignment time on each agent. Today the service counts from `tickets` on each decision, and that reads more rows as closed tickets grow.
