@@ -1,2 +1,7 @@
 work-trial.md
 .DS_Store
+node_modules/
+dist/
+.env
+/server/coverage/
+/web/coverage/
